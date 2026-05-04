@@ -1,5 +1,6 @@
 import asyncio
 import time
+import logging
 
 import pytz
 import datetime as dt
@@ -68,6 +69,8 @@ class IBTWSAPI:
         Connect the system with TWS account\n
         """
         # try:
+        logging.getLogger("ib_insync").setLevel(logging.WARNING)
+        logging.getLogger("ib_insync.ib").setLevel(logging.WARNING)
         host, port = credentials.host, credentials.port
         self.client = IB()
         self.ib = self.client
@@ -179,6 +182,7 @@ class IBTWSAPI:
             if details:
                 contract = details[0].contract
         buy_order = MarketOrder(side, qty)
+        buy_order.tif = "DAY"
         buy_trade = self.client.placeOrder(contract, buy_order)
         n = 1
         while True:
@@ -581,6 +585,10 @@ class IBTWSAPI:
             "last": market_data.last,
             "mid": (market_data.bid + market_data.ask) / 2 if market_data.bid and market_data.ask else None
         }
+        
+        if print_data:
+            print(f"market data is for {right} {premium_price}")
+            
         return premium_price
 
     async def modify_option_trail_percent(self, trade, new_trailing_percent=0.14):
@@ -618,6 +626,7 @@ class IBTWSAPI:
             raise ValueError("Invalid contract. Please check the option details.")
         contract = details[0].contract
         stop_order = StopOrder(side, quantity, self._round_stop_price(sl))
+        stop_order.tif = "DAY"
         trade = self.client.placeOrder(contract, stop_order)
         self.client.sleep(2)
         print("Stop order placed")
@@ -631,6 +640,7 @@ class IBTWSAPI:
             raise ValueError("Invalid contract. Please check the option details.")
 
         stop_order = StopOrder(side, quantity, self._round_stop_price(sl), orderId=order_id)
+        stop_order.tif = "DAY"
         trade = self.client.placeOrder(option_details[0].contract, stop_order)
 
         self.client.sleep(1)

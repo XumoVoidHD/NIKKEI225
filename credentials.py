@@ -10,7 +10,7 @@ multiplier = "1000"
 close_positions = False
 enable_logging = True
 calc_values = True
-active_close_hedges = False
+active_close_hedges = True
 close_hedges = True
 # if active_close_hedges is false then don't open the hedges at all if true
 # And close_hedges is true then close and open hedges accordingly
@@ -24,8 +24,9 @@ number_of_re_entry = 0  # Re-entry attempts allowed for the first stopped leg (s
 opposite_leg_move_to_cost = True  # When one ATM leg stops out, move the other leg's stop to entry (cost)
 # If True, skip move-to-cost when the opposite leg's trailing SL has tightened at least once
 opposite_leg_move_to_cost_respect_trailing = True
-OTM_CALL_HEDGE = 20  # How far away the call hedge is (10 means that its $50 away from current price)
-OTM_PUT_HEDGE = 40  # How far away the put hedge is (10 means that its $50 away from current price)
+trailing_sl_respecting_opposite_move_to_cost = False  # False = trailing continues after move-to-cost, True = trailing stops once move-to-cost happens
+OTM_CALL_HEDGE = 5  # How far away the call hedge is (10 means that its $50 away from current price)
+OTM_PUT_HEDGE = 5  # How far away the put hedge is (10 means that its $50 away from current price)
 ATM_CALL = 2  # How far away call position is (2 means that its $10 away from current price)
 ATM_PUT = 2  # How far away put position is (2 means that its $10 away from current price)
 call_sl = 70  # From where the call stop loss should start from (15 here means 15% of entry price)

@@ -8,6 +8,7 @@ from pytz import timezone
 from discord_bot import send_discord_message
 import os
 import logging
+import math
 
 
 def setup_logging():
@@ -59,7 +60,6 @@ class Strategy:
         self.call_target_price = credentials.call_strike
         self.put_target_price = credentials.put_strike
         self.broker = IBTWSAPI(creds=creds)
-        self.strikes = None
         self.call_percent = credentials.call_sl
         self.put_percent = credentials.put_sl
         self.call_rentry = 0
@@ -69,6 +69,8 @@ class Strategy:
         self.first_sl_leg = None
         self.call_trail_activated = False
         self.put_trail_activated = False
+        self.call_trailing_stopped_by_move_to_cost = False
+        self.put_trailing_stopped_by_move_to_cost = False
         self._sl_state_lock = asyncio.Lock()
         self.should_continue = True
         self.testing = True
@@ -118,8 +120,18 @@ class Strategy:
         opposite_leg = "put" if leg == "call" else "call"
         return self.first_sl_leg == opposite_leg
 
+    @staticmethod
+    def _has_same_entry_price(first_fill, second_fill):
+        if first_fill is None or second_fill is None:
+            return False
+        return round(first_fill, 8) == round(second_fill, 8)
+
     def _round_stop_price(self, price):
         return int(round(price / 5.0) * 5)
+
+    @staticmethod
+    def _round_to_valid_nikkei_strike(price):
+        return int(math.floor((price / 125) + 0.5) * 125)
 
     async def main(self):
         await send_discord_message("." * 100)
@@ -154,16 +166,13 @@ class Strategy:
                 microsecond=0)
             await self.lprint(f"Current Time: {current_time}")
             if (start_time <= current_time <= closing_time) or self.testing:
-                self.strikes = await self.broker.fetch_strikes(credentials.instrument, credentials.exchange,
-                                                               secType="IND")
                 current_price = await self.broker.current_price(credentials.instrument, credentials.exchange)
                 current_price = int(current_price)
-
-                closest_strike = min(self.strikes, key=lambda x: abs(x - current_price))
+                closest_strike = self._round_to_valid_nikkei_strike(current_price)
 
                 await self.lprint("\n\nNew Trading Session Start\n")
                 await self.lprint(f"CURRENT PRICE: {current_price}")
-                await self.lprint(f"CLOSEST CURRENT PRICE: {closest_strike}")
+                await self.lprint(f"DERIVED STRIKE PRICE: {closest_strike}")
 
                 if credentials.calc_values:
                     self.otm_closest_call = closest_strike + (credentials.OTM_CALL_HEDGE * 125)
@@ -198,6 +207,8 @@ class Strategy:
                     f"(if True, when one leg hits SL the other leg's stop can move to entry). "
                     f"respect_opposite_trailing={credentials.opposite_leg_move_to_cost_respect_trailing} "
                     f"(if True, skip that move once the opposite leg's trailing SL has tightened). "
+                    f"trailing_sl_respecting_opposite_move_to_cost={credentials.trailing_sl_respecting_opposite_move_to_cost} "
+                    "(if False, trailing keeps running after move-to-cost; if True, trailing stops after move-to-cost). "
                     f"max_re_entries_first_stopped_leg={credentials.number_of_re_entry} "
                     "(when first-stop restriction is enabled, only that leg may use these; otherwise each leg uses its own limit)."
                 )
@@ -436,6 +447,7 @@ class Strategy:
 
             self.call_order_placed = True
             self.call_trail_activated = False
+            self.call_trailing_stopped_by_move_to_cost = False
             self.atm_call_sl = self._round_stop_price(
                 self.atm_call_fill * (1 + (self.call_percent / 100))
             )
@@ -490,6 +502,7 @@ class Strategy:
                         and self.put_stp_id
                         and self.put_contract is not None
                         and self.atm_put_fill is not None
+                        and not self._has_same_entry_price(self.atm_call_fill, self.atm_put_fill)
                     ):
                         self.atm_put_sl = self._round_stop_price(self.atm_put_fill)
                         await self.broker.modify_stp_order(
@@ -505,6 +518,26 @@ class Strategy:
                         )
                         await self.dprint(
                             f"[PUT] Opposite leg SL moved to cost: {self.atm_put_sl}"
+                        )
+                        if credentials.trailing_sl_respecting_opposite_move_to_cost:
+                            self.put_trailing_stopped_by_move_to_cost = True
+                            await self.lprint(
+                                "[PUT] Trailing stopped after move-to-cost because "
+                                "trailing_sl_respecting_opposite_move_to_cost is True."
+                            )
+                    elif (
+                        credentials.opposite_leg_move_to_cost
+                        and self.put_order_placed
+                        and self.put_stp_id
+                        and self.put_contract is not None
+                        and self.atm_put_fill is not None
+                        and self._has_same_entry_price(self.atm_call_fill, self.atm_put_fill)
+                    ):
+                        await self.lprint(
+                            "[MOVE-TO-COST] Put stop not changed: Call and Put entry prices are the same."
+                        )
+                        await self.dprint(
+                            "[PUT] Move-to-cost skipped: call and put entry prices are equal"
                         )
                     elif (
                         credentials.opposite_leg_move_to_cost
@@ -541,6 +574,9 @@ class Strategy:
         temp_percentage = 1
         while self.should_continue:
             if self.call_order_placed:
+                if self.call_trailing_stopped_by_move_to_cost:
+                    await asyncio.sleep(credentials.call_check_time)
+                    continue
                 premium_price = await self.broker.get_latest_premium_price(
                     symbol=credentials.instrument,
                     expiry=credentials.date,
@@ -642,6 +678,7 @@ class Strategy:
 
             self.put_order_placed = True
             self.put_trail_activated = False
+            self.put_trailing_stopped_by_move_to_cost = False
             self.atm_put_sl = self._round_stop_price(
                 self.atm_put_fill * (1 + (self.put_percent / 100))
             )
@@ -696,6 +733,7 @@ class Strategy:
                         and self.call_stp_id
                         and self.call_contract is not None
                         and self.atm_call_fill is not None
+                        and not self._has_same_entry_price(self.atm_call_fill, self.atm_put_fill)
                     ):
                         self.atm_call_sl = self._round_stop_price(self.atm_call_fill)
                         await self.broker.modify_stp_order(
@@ -711,6 +749,26 @@ class Strategy:
                         )
                         await self.dprint(
                             f"[CALL] Opposite leg SL moved to cost: {self.atm_call_sl}"
+                        )
+                        if credentials.trailing_sl_respecting_opposite_move_to_cost:
+                            self.call_trailing_stopped_by_move_to_cost = True
+                            await self.lprint(
+                                "[CALL] Trailing stopped after move-to-cost because "
+                                "trailing_sl_respecting_opposite_move_to_cost is True."
+                            )
+                    elif (
+                        credentials.opposite_leg_move_to_cost
+                        and self.call_order_placed
+                        and self.call_stp_id
+                        and self.call_contract is not None
+                        and self.atm_call_fill is not None
+                        and self._has_same_entry_price(self.atm_call_fill, self.atm_put_fill)
+                    ):
+                        await self.lprint(
+                            "[MOVE-TO-COST] Call stop not changed: Call and Put entry prices are the same."
+                        )
+                        await self.dprint(
+                            "[CALL] Move-to-cost skipped: call and put entry prices are equal"
                         )
                     elif (
                         credentials.opposite_leg_move_to_cost
@@ -747,6 +805,9 @@ class Strategy:
         temp_percentage = 1
         while self.should_continue:
             if self.put_order_placed:
+                if self.put_trailing_stopped_by_move_to_cost:
+                    await asyncio.sleep(credentials.put_check_time)
+                    continue
                 premium_price = await self.broker.get_latest_premium_price(
                     symbol=credentials.instrument,
                     expiry=credentials.date,

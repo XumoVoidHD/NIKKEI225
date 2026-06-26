@@ -2,11 +2,11 @@
 port = 7497
 host = "127.0.0.1"
 data_type = 4
-instrument = "N225"
-tradingClass = "225"
+instrument = "N225M"
+tradingClass = "225M"
 exchange = "OSE.JPN"
 currency = "JPY"
-multiplier = "1000"
+multiplier = "100"
 close_positions = False
 enable_logging = True
 calc_values = True

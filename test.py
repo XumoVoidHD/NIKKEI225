@@ -6,7 +6,7 @@ ib.connect('127.0.0.1', 7497, clientId=1)
 # -----------------------------
 # 1) INDEX PRICE (works in your setup)
 # -----------------------------
-index = Index(symbol='N225', exchange='OSE.JPN', currency='JPY')
+index = Index(symbol='N225M', exchange='OSE.JPN', currency='JPY')
 ib.qualifyContracts(index)
 
 t_idx = ib.reqMktData(index, '', False, False)
@@ -20,7 +20,7 @@ print("Index Price:", idx_price)
 # 2) NIKKEI 225 INDEX OPTION (OSE) - NO conId
 # -----------------------------
 opt = Option(
-    symbol='N225',
+    symbol='N225M',
     lastTradeDateOrContractMonth='20260507',  # MAY 08 '26
     strike=59750,
     right='C',
